@@ -1531,42 +1531,106 @@ func checkM3u8(b string, f string) (string, error) {
 	var EnhancedHls string
 	if Config.GetM3u8FromDevice {
 		adamID := b
-		conn, err := net.Dial("tcp", Config.GetM3u8Port)
+		
+		// 设置重试参数
+		retryDelay := time.Second * 2
+		maxAttempts := 100 // 设置一个较大的值，实际上是无限重试，但为了安全设置一个上限
+		
+		var conn net.Conn
+		var err error
+		
+		// 持续重试连接，直到成功
+		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			conn, err = net.Dial("tcp", Config.GetM3u8Port)
+			if err == nil {
+				break // 连接成功，跳出循环
+			}
+			
+			fmt.Printf("Error connecting to device (attempt %d): %v\n", attempt, err)
+			fmt.Printf("Retrying in %v...\n", retryDelay)
+			time.Sleep(retryDelay)
+		}
+		
 		if err != nil {
-			fmt.Println("Error connecting to device:", err)
+			fmt.Println("Failed to connect after", maxAttempts, "attempts:", err)
 			return "none", err
 		}
+		
 		defer conn.Close()
 		if f == "song" {
 			fmt.Println("Connected to device")
 		}
-
-		// Send the length of adamID and the adamID itself
+	
+		// 发送 adamID 长度和 adamID 本身
 		adamIDBuffer := []byte(adamID)
 		lengthBuffer := []byte{byte(len(adamIDBuffer))}
-
-		// Write length and adamID to the connection
+	
+		// 写入长度和 adamID 到连接
 		_, err = conn.Write(lengthBuffer)
 		if err != nil {
 			fmt.Println("Error writing length to device:", err)
 			return "none", err
 		}
-
+	
 		_, err = conn.Write(adamIDBuffer)
 		if err != nil {
 			fmt.Println("Error writing adamID to device:", err)
 			return "none", err
 		}
-
-		// Read the response (URL) from the device
-		response, err := bufio.NewReader(conn).ReadBytes('\n')
+	
+		// 持续重试读取响应，直到成功
+		var response []byte
+		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			response, err = bufio.NewReader(conn).ReadBytes('\n')
+			if err == nil {
+				break // 读取成功，跳出循环
+			}
+			
+			fmt.Printf("Error reading response from device (attempt %d): %v\n", attempt, err)
+			
+			// 对于 EOF 错误，需要重新建立连接
+			if err.Error() == "EOF" {
+				fmt.Println("Connection closed by device, reconnecting...")
+				conn.Close()
+				
+				// 重新连接
+				var reconnectErr error
+				for reconnectAttempt := 1; ; reconnectAttempt++ {
+					conn, reconnectErr = net.Dial("tcp", Config.GetM3u8Port)
+					if reconnectErr == nil {
+						break // 重连成功
+					}
+					
+					fmt.Printf("Failed to reconnect (attempt %d): %v\n", reconnectAttempt, reconnectErr)
+					fmt.Printf("Retrying reconnection in %v...\n", retryDelay)
+					time.Sleep(retryDelay)
+				}
+				
+				// 重新发送数据
+				_, err = conn.Write(lengthBuffer)
+				if err != nil {
+					fmt.Println("Error writing length to device after reconnect:", err)
+					continue
+				}
+				
+				_, err = conn.Write(adamIDBuffer)
+				if err != nil {
+					fmt.Println("Error writing adamID to device after reconnect:", err)
+					continue
+				}
+			} else {
+				// 其他错误，等待后重试
+				fmt.Printf("Retrying read in %v...\n", retryDelay)
+				time.Sleep(retryDelay)
+			}
+		}
+		
 		if err != nil {
-			fmt.Println("Error reading response from device:", err)
+			fmt.Println("Failed to read response after", maxAttempts, "attempts:", err)
 			return "none", err
 		}
-
-		// Trim any newline characters from the response
-
+	
+		// 处理响应
 		response = bytes.TrimSpace(response)
 		if len(response) > 0 {
 			if f == "song" {
