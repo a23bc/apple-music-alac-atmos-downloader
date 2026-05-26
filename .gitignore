@@ -1,15 +1,1 @@
-*
-!.gitignore
-!.gitattributes
-!.dockerignore
-!/config.yaml.example
-!/agent.js
-!/agent-arm64.js
-!/go.mod
-!/go.sum
-!/main.go
-!/README.md
-!/utils/
-!/utils/**
-!/cmd/
-!/cmd/**
+Nothing to output - the modified files (README-CN.md, README.md) are source/config files and no build artifacts, dependencies, or temp files were detected in the changes.
